@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/spf13/viper"
+
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
@@ -36,9 +38,16 @@ type bus_stats_body struct {
 var db *sql.DB
 
 func main() {
+	viper.SetConfigFile(".env")
+	viper.ReadInConfig()
+	postgresql_uri, ok := viper.Get("POSTGRESQL_URI").(string)
+
+	if !ok {
+		log.Fatal("Invalid POSTGRESQL URI")
+	}
 
 	var err error
-	db, err = sql.Open("postgres", "postgresql://neondb_owner:npg_xuF2vgNTX3dG@ep-weathered-thunder-ac0sad5r-pooler.sa-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require")
+	db, err = sql.Open("postgres", postgresql_uri)
 	if err != nil {
 		log.Fatal(err)
 	}
