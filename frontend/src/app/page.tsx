@@ -9,7 +9,7 @@ export default async function Home() {
   if (!session) redirect("/login");
 
   return (
-    <div style={{ padding: 20 }}>
+    <div>
       <h1>Bem-vindo, {session.user?.name}</h1>
 
       <LogoutButton />
