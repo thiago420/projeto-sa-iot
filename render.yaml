@@ -6,3 +6,5 @@ services:
     rootDir: backend
     buildCommand: "go build -o app ."
     startCommand: "./app"
+    build:
+      goVersion: 1.25.3
