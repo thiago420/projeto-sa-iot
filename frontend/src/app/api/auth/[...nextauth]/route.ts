@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import NextAuth, { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 
@@ -14,24 +15,24 @@ export const authOptions: NextAuthOptions = {
       authorize: async (credentials) => {
         if (!credentials) return null;
 
-        const res = await fetch("http://localhost:8080/v1/auth/login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            login: credentials.email,
-            password: credentials.password,
-          }),
-        });
+        // const res = await fetch("http://localhost:8080/v1/auth/login", {
+        //   method: "POST",
+        //   headers: { "Content-Type": "application/json" },
+        //   body: JSON.stringify({
+        //     login: credentials.email,
+        //     password: credentials.password,
+        //   }),
+        // });
 
-        if (!res.ok) return null;
+        // if (!res.ok) return null;
 
-        const data = await res.json();
+        // const data = await res.json();
 
         return {
-          id: data.id ?? "1",
-          email: credentials.email,
-          backendToken: data.token,
-          role: "user",
+          id: "2e66c4d1-d9fb-4562-8c28-c5b090aae520",
+          email: "teste@gmail.com",
+          backendToken: "123456",
+          role: "USER",
         };
       },
     }),
@@ -77,8 +78,10 @@ export const authOptions: NextAuthOptions = {
       return token;
     },
     async session({ session, token }) {
+      if (!session.user) session.user = {} as any;
+
       session.user.backendToken = token.backendToken as string;
-      session.user.role = token.role as "user" | "admin";
+      session.user.role = token.role as "USER" | "ADMIN";
       return session;
     },
   },
