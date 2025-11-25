@@ -9,7 +9,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import SignOutButton from "@/components/SignOutButton";
-import { Bus, FileText, Home, LogOut, User, Wallet, History } from "lucide-react";
+import { Bus, FileText, Home, User, Wallet, History } from "lucide-react";
+import NavigateButtons from "@/components/NavigateButtons";
 
 
 type User = {
@@ -24,6 +25,7 @@ export default async function MainLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  await new Promise((resolve) => setTimeout(resolve, 1000));
   const infoUser = (await api.get("/user/info/basic")).data as User;
 
   const saldoFormatado = String(Number(infoUser.balance).toFixed(2)).replaceAll(
@@ -40,7 +42,7 @@ export default async function MainLayout({
       <header className="flex flex-row items-center justify-between text-white px-6 h-16 bg-red-600 shadow-md">
         <div className="flex items-center gap-3">
           <Bus className="w-8 h-8" />
-          <h1 className="text-xl font-bold">TransporteFácil</h1>
+          <h1 className="text-xl font-bold">MyBus</h1>
         </div>
         <div className="flex flex-row items-center gap-4">
           <div className="hidden md:flex items-center gap-2 bg-red-700 px-4 py-2 rounded-lg">
@@ -71,31 +73,9 @@ export default async function MainLayout({
                 </div>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuItem>
-                <Home className="mr-2 h-4 w-4" />
-                Início
-              </DropdownMenuItem>
-              <DropdownMenuItem>
-                <Wallet className="mr-2 h-4 w-4" />
-                Adicionar Saldo
-              </DropdownMenuItem>
-              <DropdownMenuItem>
-                <History className="mr-2 h-4 w-4" />
-                Histórico de Passagens
-              </DropdownMenuItem>
-              <DropdownMenuItem>
-                <FileText className="mr-2 h-4 w-4" />
-                Histórico de Cobranças
-              </DropdownMenuItem>
-              <DropdownMenuItem>
-                <User className="mr-2 h-4 w-4" />
-                Editar Perfil
-              </DropdownMenuItem>
+              <NavigateButtons />
               <DropdownMenuSeparator />
-              <DropdownMenuItem className="text-red-600">
-                <LogOut className="mr-2 h-4 w-4" />
-                Sair
-              </DropdownMenuItem>
+              <SignOutButton />
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

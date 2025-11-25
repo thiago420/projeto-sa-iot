@@ -9,30 +9,29 @@ export const authOptions: NextAuthOptions = {
       id: "credentials-user",
       name: "Usuário",
       credentials: {
-        email: { label: "Email", type: "email" },
+        login: { label: "Login", type: "login" },
         password: { label: "Senha", type: "password" },
       },
       authorize: async (credentials) => {
         if (!credentials) return null;
 
-        // const res = await fetch("http://localhost:8080/v1/auth/login", {
-        //   method: "POST",
-        //   headers: { "Content-Type": "application/json" },
-        //   body: JSON.stringify({
-        //     login: credentials.email,
-        //     password: credentials.password,
-        //   }),
-        // });
+        const res = await fetch("http://localhost:8080/v1/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            login: credentials.login,
+            password: credentials.password,
+          }),
+        });
 
-        // if (!res.ok) return null;
+        if (!res.ok) return null;
 
-        // const data = await res.json();
+        const data = await res.json();
 
         return {
-          id: "2e66c4d1-d9fb-4562-8c28-c5b090aae520",
-          email: "teste@gmail.com",
-          backendToken: "123456",
-          role: "USER",
+          id: data.id,
+          backendToken: data.token,
+          role: data.role,
         };
       },
     }),

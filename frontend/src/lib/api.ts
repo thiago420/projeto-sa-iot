@@ -14,8 +14,6 @@ api.interceptors.request.use(async (config) => {
 
   const token = session?.user?.backendToken;
 
-  console.log(session);
-
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }

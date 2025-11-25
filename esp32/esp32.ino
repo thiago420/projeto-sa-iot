@@ -14,10 +14,10 @@ const char* password = "kari2204";
 // -------------------------------------
 // URLs das APIs
 // -------------------------------------
-String IdBus = "c06fec68-765f-42e1-a6db-871222b0e069";
+String IdBus = "ec9fc16d-3e6b-44d5-bf54-496c5e81d674";
 // String apiUID = "http://192.168.16.121:8080/user/uid";
-String apiUID = "http://192.168.16.121:8080/fare";
-String apiGPS = "http://192.168.16.121:8080/bus/c06fec68-765f-42e1-a6db-871222b0e069/stats";
+String apiUID = "http://192.168.16.121:8080/v1/bus/fare";
+String apiGPS = "http://192.168.16.121:8080/v1/bus/c06fec68-765f-42e1-a6db-871222b0e069/stats";
 
 // -------------------------------------
 // RFID CONFIG

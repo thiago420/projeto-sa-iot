@@ -1,0 +1,8 @@
+services:
+  - type: web
+    name: api-go
+    env: go
+    plan: free
+    rootDir: backend
+    buildCommand: "go build -o app ."
+    startCommand: "./app"

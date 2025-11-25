@@ -1,57 +1,64 @@
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../api/auth/[...nextauth]/route";
 import { redirect } from "next/navigation";
+import dynamic from "next/dynamic"; // Importação necessária
 
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { 
-  MapPin, 
-  Bus, 
-  Wallet,
-  DollarSign,
-  Clock
-} from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { MapPin, Bus, Wallet, DollarSign } from "lucide-react";
+import api from "@/lib/api";
+
+// Tipagem
+type BusData = {
+  id: string;
+  name: string;
+  route: string;
+  fare: number;
+  lat: number;
+  lng: number;
+  date: string;
+};
+
+type Res = {
+  id: string;
+  image: string;
+  name: string;
+  surname: string;
+  balance: number;
+  totalRoutes: number;
+  totalSpendMonth: number;
+  buses: BusData[];
+};
+
+// Importação dinâmica do mapa (Desabilita SSR para o Leaflet)
+const BusMap = dynamic(() => import("@/components/BusMap"), {
+  ssr: true,
+  loading: () => (
+    <div className="w-full h-96 bg-gray-200 rounded-lg flex items-center justify-center animate-pulse">
+      <MapPin className="w-10 h-10 text-gray-400" />
+      <span className="ml-2 text-gray-500">Carregando mapa...</span>
+    </div>
+  ),
+});
 
 export default async function Home() {
   const session = await getServerSession(authOptions);
 
   if (!session) redirect("/login");
 
-  const buses = [
-    {
-      id: 1,
-      line: "201",
-      destination: "Centro",
-      status: "Em movimento",
-      eta: "5 min",
-      image:
-        "https://images.unsplash.com/photo-1570125909232-eb263c188f7e?w=100&h=100&fit=crop",
-    },
-    {
-      id: 2,
-      line: "305",
-      destination: "Aeroporto",
-      status: "Parado",
-      eta: "12 min",
-      image:
-        "https://images.unsplash.com/photo-1544620347-c4fd4a3d5957?w=100&h=100&fit=crop",
-    },
-    {
-      id: 3,
-      line: "102",
-      destination: "Shopping",
-      status: "Em movimento",
-      eta: "8 min",
-      image:
-        "https://images.unsplash.com/photo-1570125909232-eb263c188f7e?w=100&h=100&fit=crop",
-    },
-  ];
+  const data = (await api.get("/user/info/dashboard")).data as Res;
+
+  const formatCurrency = (num: number | string) => {
+    if (typeof num === "string") num = Number(num);
+    return String(num.toFixed(2)).replaceAll(".", ",");
+  };
 
   return (
     <div className="p-6 space-y-6 bg-gray-50 min-h-screen">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className="border-red-200">
-          <CardHeader className="pb-3">
+        {/* Card de Saldo */}
+        <Card className="border-red-200 gap-1">
+          <CardHeader>
             <CardTitle className="text-sm font-medium text-gray-600">
               Saldo Disponível
             </CardTitle>
@@ -60,14 +67,15 @@ export default async function Home() {
             <div className="flex items-center gap-2">
               <Wallet className="w-5 h-5 text-red-600" />
               <span className="text-2xl font-bold text-red-600">
-                R$ 0,00
+                R$ {formatCurrency(data.balance)}
               </span>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="border-red-200">
-          <CardHeader className="pb-3">
+        {/* Card de Viagens */}
+        <Card className="border-red-200 gap-1">
+          <CardHeader>
             <CardTitle className="text-sm font-medium text-gray-600">
               Viagens este Mês
             </CardTitle>
@@ -75,13 +83,14 @@ export default async function Home() {
           <CardContent>
             <div className="flex items-center gap-2">
               <Bus className="w-5 h-5 text-red-600" />
-              <span className="text-2xl font-bold">24</span>
+              <span className="text-2xl font-bold">{data.totalRoutes}</span>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="border-red-200">
-          <CardHeader className="pb-3">
+        {/* Card de Gastos */}
+        <Card className="border-red-200 gap-1">
+          <CardHeader>
             <CardTitle className="text-sm font-medium text-gray-600">
               Gasto no Mês
             </CardTitle>
@@ -89,12 +98,15 @@ export default async function Home() {
           <CardContent>
             <div className="flex items-center gap-2">
               <DollarSign className="w-5 h-5 text-red-600" />
-              <span className="text-2xl font-bold">R$ 124,80</span>
+              <span className="text-2xl font-bold">
+                R$ {formatCurrency(data.totalSpendMonth)}
+              </span>
             </div>
           </CardContent>
         </Card>
       </div>
 
+      {/* CARD DO MAPA ATUALIZADO */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -103,71 +115,40 @@ export default async function Home() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="w-full h-96 bg-gray-200 rounded-lg flex items-center justify-center relative overflow-hidden">
-            <div className="absolute inset-0 bg-gradient-to-br from-gray-100 to-gray-300"></div>
-            <div className="relative z-10 text-center">
-              <MapPin className="w-12 h-12 text-red-600 mx-auto mb-2" />
-              <p className="text-gray-600">Mapa interativo com Leaflet</p>
-              <p className="text-sm text-gray-500 mt-1">
-                Integração com Google Maps
-              </p>
-            </div>
-            {[1, 2, 3].map((i) => (
-              <div
-                key={i}
-                className="absolute bg-red-600 rounded-full w-3 h-3 animate-pulse"
-                style={{
-                  top: `${20 + i * 25}%`,
-                  left: `${30 + i * 15}%`,
-                }}
-              />
-            ))}
-          </div>
+          {/* Aqui passamos os dados dos ônibus (lat/lng) para o componente de mapa */}
+          <BusMap buses={data.buses} />
         </CardContent>
       </Card>
 
+      {/* Lista de Ônibus */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Bus className="w-5 h-5 text-red-600" />
-            Ônibus Próximos
+            Histórico de Ônibus
           </CardTitle>
         </CardHeader>
         <CardContent>
           <div className="space-y-3">
-            {buses.map((bus) => (
+            {data.buses.map((bus) => (
               <div
                 key={bus.id}
                 className="flex items-center gap-4 p-3 border rounded-lg hover:bg-gray-50 transition-colors"
               >
-                <img
-                  src={bus.image}
-                  alt={`Linha ${bus.line}`}
-                  className="w-16 h-16 rounded-lg object-cover"
-                />
                 <div className="flex-1">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <Badge
                       variant="outline"
                       className="bg-red-50 text-red-700 border-red-300"
                     >
-                      Linha {bus.line}
+                      {bus.name}
                     </Badge>
-                    <span className="font-semibold">{bus.destination}</span>
-                  </div>
-                  <div className="flex items-center gap-4 mt-1 text-sm text-gray-600">
-                    <span className="flex items-center gap-1">
-                      <Clock className="w-3 h-3" />
-                      {bus.eta}
+                    <span className="font-semibold">Via {bus.route}</span>
+                    <span className="flex items-center gap-1 text-gray-600 text-sm">
+                      R$ {formatCurrency(bus.fare)}
                     </span>
-                    <span
-                      className={
-                        bus.status === "Em movimento"
-                          ? "text-green-600"
-                          : "text-orange-600"
-                      }
-                    >
-                      {bus.status}
+                    <span className="text-xs text-gray-400 ml-auto">
+                      {new Date(bus.date).toLocaleDateString()}
                     </span>
                   </div>
                 </div>

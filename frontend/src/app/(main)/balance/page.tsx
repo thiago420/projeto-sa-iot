@@ -1,17 +1,46 @@
-"use client"
+"use client";
 
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Separator } from '@/components/ui/separator';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { CreditCard, QrCode, Wallet } from 'lucide-react';
-import React, { useState } from 'react'
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import apiClient from "@/lib/api_client";
+import { CreditCard, QrCode, Wallet } from "lucide-react";
+import { useRouter } from "next/navigation";
+import React, { useState } from "react";
+import { toast } from "sonner";
 
 const Balance = () => {
-  const [amount, setAmount] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState('pix');
+  const [amount, setAmount] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState("PIX");
+
+  const router = useRouter();
+
+  const handleSubmit = () => {
+    apiClient
+      .post("/user/balance/add", {
+        type: paymentMethod,
+        value: Number(amount),
+      })
+      .then((res) => {
+        toast.success("Saldo adicionado com sucesso!");
+        router.push("/");
+        router.refresh();
+      })
+      .catch((err) => {
+        toast.error(
+          "Um erro inesperado aconteceu ao tentar adicionar o saldo!"
+        );
+      });
+  };
 
   return (
     <div className="p-6 max-w-2xl mx-auto space-y-6">
@@ -23,15 +52,17 @@ const Balance = () => {
       <Card>
         <CardHeader>
           <CardTitle>Quanto deseja adicionar?</CardTitle>
-          <CardDescription>Escolha o valor e a forma de pagamento</CardDescription>
+          <CardDescription>
+            Escolha o valor e a forma de pagamento
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="space-y-2">
             <Label htmlFor="amount">Valor (R$)</Label>
-            <Input 
-              id="amount" 
-              type="number" 
-              placeholder="0,00" 
+            <Input
+              id="amount"
+              type="number"
+              placeholder="0,00"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               className="text-lg"
@@ -39,10 +70,10 @@ const Balance = () => {
           </div>
 
           <div className="grid grid-cols-3 gap-3">
-            {['10', '25', '50', '100', '200', '500'].map((val) => (
-              <Button 
+            {["10", "25", "50", "100", "200", "500"].map((val) => (
+              <Button
                 key={val}
-                variant="outline" 
+                variant="outline"
                 onClick={() => setAmount(val)}
                 className="border-red-200 hover:bg-red-50"
               >
@@ -55,30 +86,37 @@ const Balance = () => {
 
           <Tabs value={paymentMethod} onValueChange={setPaymentMethod}>
             <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="pix">
+              <TabsTrigger value="PIX">
                 <QrCode className="w-4 h-4 mr-2" />
                 PIX
               </TabsTrigger>
-              <TabsTrigger value="credit">
+              <TabsTrigger value="CREDIT_CARD">
                 <CreditCard className="w-4 h-4 mr-2" />
                 Cartão de Crédito
               </TabsTrigger>
             </TabsList>
-            
-            <TabsContent value="pix" className="space-y-4 mt-4">
+
+            <TabsContent value="PIX" className="space-y-4 mt-4">
               <div className="bg-gray-50 p-6 rounded-lg text-center">
                 <div className="w-48 h-48 bg-white border-4 border-red-600 mx-auto mb-4 flex items-center justify-center">
                   <QrCode className="w-32 h-32 text-red-600" />
                 </div>
-                <p className="text-sm text-gray-600 mb-2">Escaneie o QR Code com seu app de pagamento</p>
-                <code className="text-xs bg-white px-3 py-2 rounded border">00020126580014BR.GOV.BCB.PIX...</code>
+                <p className="text-sm text-gray-600 mb-2">
+                  Escaneie o QR Code com seu app de pagamento
+                </p>
+                <code className="text-xs bg-white px-3 py-2 rounded border">
+                  00020126580014BR.GOV.BCB.PIX...
+                </code>
               </div>
-              <Button className="w-full bg-red-600 hover:bg-red-700">
-                Copiar Código PIX
+              <Button
+                className="w-full bg-red-600 hover:bg-red-700"
+                onClick={handleSubmit}
+              >
+                Confirmar Pagamento
               </Button>
             </TabsContent>
-            
-            <TabsContent value="credit" className="space-y-4 mt-4">
+
+            <TabsContent value="CREDIT_CARD" className="space-y-4 mt-4">
               <div className="space-y-3">
                 <div className="space-y-2">
                   <Label htmlFor="cardNumber">Número do Cartão</Label>
@@ -99,7 +137,10 @@ const Balance = () => {
                   <Input id="cardName" placeholder="Nome completo" />
                 </div>
               </div>
-              <Button className="w-full bg-red-600 hover:bg-red-700">
+              <Button
+                className="w-full bg-red-600 hover:bg-red-700"
+                onClick={handleSubmit}
+              >
                 Confirmar Pagamento
               </Button>
             </TabsContent>
@@ -108,6 +149,6 @@ const Balance = () => {
       </Card>
     </div>
   );
-}
+};
 
-export default Balance
+export default Balance;

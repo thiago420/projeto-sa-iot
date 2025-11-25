@@ -4,7 +4,7 @@ declare module "next-auth" {
   interface Session {
     user: {
       name?: string | null;
-      email?: string | null;
+      login?: string | null;
       backendToken: string; // 👈 adicionando o token do backend
       role: "USER" | "ADMIN"; // 👈 se quiser diferenciar roles
     };

@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/viper"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
@@ -52,14 +53,26 @@ type Address struct {
 }
 
 type Bus struct {
-	ID   string  `json:"id,omitempty"`
-	Name string  `json:"name" binding:"required"`
-	Fare float64 `json:"fare,omitempty"`
+	ID     string  `json:"id,omitempty"`
+	Name   string  `json:"name" binding:"required"`
+	Route  string  `json:"route" binding:"required"`
+	Fare   float64 `json:"fare" binding:"required"`
+	Active bool    `json:"active" binding:"required"`
 }
 
 type BusStats struct {
 	ID    string  `json:"id,omitempty"`
 	IdBus string  `json:"id_bus,omitempty"`
+	Lat   float64 `json:"lat" binding:"required"`
+	Lng   float64 `json:"lng" binding:"required"`
+	Date  string  `json:"date,omitempty"`
+}
+
+type BusAndStats struct {
+	ID    string  `json:"id,omitempty"`
+	Name  string  `json:"name" binding:"required"`
+	Route string  `json:"route" binding:"required"`
+	Fare  float64 `json:"fare" binding:"required"`
 	Lat   float64 `json:"lat" binding:"required"`
 	Lng   float64 `json:"lng" binding:"required"`
 	Date  string  `json:"date,omitempty"`
@@ -85,6 +98,23 @@ type FareHistory struct {
 	Date    string  `json:"date"`
 	NameBus string  `json:"name_bus"`
 	FareBus float64 `json:"fare_bus"`
+}
+
+type BalanceHistoryType string
+
+const (
+	PIX        BalanceHistoryType = "PIX"
+	CardCredit BalanceHistoryType = "CREDIT_CARD"
+)
+
+type BalanceHistory struct {
+	ID         string             `json:"id,omitempty"`
+	IdUser     string             `json:"id_bus,omitempty"`
+	OldBalance float64            `json:"old_balance,omitempty"`
+	Balance    float64            `json:"balance,omitempty"`
+	Value      float64            `json:"value" binding:"required"`
+	Type       BalanceHistoryType `json:"type" binding:"required"`
+	Date       string             `json:"date,omitempty"`
 }
 
 var db *sql.DB
@@ -168,7 +198,7 @@ func main() {
 	jwt_secret, ok := viper.Get("JWT_SECRET").(string)
 
 	if !ok {
-		log.Fatal("Invalid JWT SECRET")
+		log.Println("Invalid JWT SECRET")
 	}
 
 	JwtSecret = []byte(jwt_secret)
@@ -176,16 +206,31 @@ func main() {
 	postgresql_uri, ok := viper.Get("POSTGRESQL_URI").(string)
 
 	if !ok {
-		log.Fatal("Invalid POSTGRESQL URI")
+		log.Println("Invalid POSTGRESQL URI")
 	}
 
 	var err error
 	db, err = sql.Open("postgres", postgresql_uri)
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
+	}
+
+	port, ok := viper.Get("PORT").(string)
+
+	if !ok {
+		log.Println("Invalid PORT")
 	}
 
 	router := gin.Default()
+
+	router.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"*"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: true,
+		MaxAge:           12 * time.Hour,
+	}))
 
 	v1 := router.Group("v1")
 
@@ -206,7 +251,10 @@ func main() {
 	user := v1.Group("user")
 	user.Use(TokenAuthMiddleware())
 	user.GET("/info/basic", getBasicInfoUser)
-	user.GET("/fare/history/:id", getFaresByUser)
+	user.GET("/info/dashboard", getDashboardInfoUser)
+	user.GET("/fare/history", getFaresByUser)
+	user.GET("/balance/history", getBalanceHistoryByUser)
+	user.POST("/balance/add", addBalanceUser)
 
 	hub = NewHub()
 
@@ -214,7 +262,7 @@ func main() {
 		hub.HandleWS(&ginContextAdapter{c: ctx})
 	})
 
-	router.Run(":8080")
+	router.Run(":" + port)
 }
 func TokenAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -246,24 +294,24 @@ func TokenAuthMiddleware() gin.HandlerFunc {
 func getBuses(c *gin.Context) {
 	c.Header("Content-Type", "application/json")
 
-	rows, err := db.Query("SELECT id, name FROM bus")
+	rows, err := db.Query("SELECT id, name, route, fare, active FROM bus")
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 	defer rows.Close()
 
 	var buses []Bus
 	for rows.Next() {
 		var a Bus
-		err := rows.Scan(&a.ID, &a.Name)
+		err := rows.Scan(&a.ID, &a.Name, &a.Route, &a.Fare, &a.Active)
 		if err != nil {
-			log.Fatal(err)
+			log.Println(err)
 		}
 		buses = append(buses, a)
 	}
 	err = rows.Err()
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 
 	c.IndentedJSON(http.StatusOK, buses)
@@ -280,16 +328,16 @@ func getBus(c *gin.Context) {
 	}
 
 	var bus Bus
-	row := db.QueryRow("SELECT id, name FROM bus WHERE id = $1", id)
+	row := db.QueryRow("SELECT id, name, route, fare, active FROM bus WHERE id = $1", id)
 
-	err := row.Scan(&bus.ID, &bus.Name)
+	err := row.Scan(&bus.ID, &bus.Name, &bus.Route, &bus.Fare, &bus.Active)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
 			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "No data found with ID: " + id})
 			return
 		} else {
-			log.Fatal(err)
+			log.Println(err)
 		}
 	}
 
@@ -312,7 +360,7 @@ func getBusStats(c *gin.Context) {
 			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "No data found with ID: " + id})
 			return
 		} else {
-			log.Fatal(err)
+			log.Println(err)
 		}
 	}
 	defer rows.Close()
@@ -322,13 +370,13 @@ func getBusStats(c *gin.Context) {
 		var a BusStats
 		err := rows.Scan(&a.ID, &a.IdBus, &a.Lat, &a.Lng, &a.Date)
 		if err != nil {
-			log.Fatal(err)
+			log.Println(err)
 		}
 		bus_sts = append(bus_sts, a)
 	}
 	err = rows.Err()
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 
 	c.IndentedJSON(http.StatusOK, bus_sts)
@@ -363,18 +411,241 @@ func getBasicInfoUser(c *gin.Context) {
 			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "No data found with ID: " + IdUserToken})
 			return
 		} else {
-			log.Fatal(err_row)
+			log.Println(err_row)
 		}
 	}
 
 	c.IndentedJSON(http.StatusOK, gin.H{"image": user.Image, "name": user.Name, "surname": user.Surname, "balance": user.Balance})
 }
 
+func getDashboardInfoUser(c *gin.Context) {
+	v, exists := c.Get("token")
+	if !exists {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid authorization header"})
+		return
+	}
+
+	token, ok := v.(string)
+	if !ok {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid authorization header"})
+		return
+	}
+
+	IdUserToken, err := getUserIDFromToken(token)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Cannot get ID with this TOKEN"})
+		return
+	}
+
+	var user User
+	row := db.QueryRow("SELECT id, image, name, surname, balance FROM users WHERE id = $1", IdUserToken)
+
+	err_row := row.Scan(&user.ID, &user.Image, &user.Name, &user.Surname, &user.Balance)
+
+	if err_row != nil {
+		if err_row == sql.ErrNoRows {
+			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "No data found with ID: " + IdUserToken})
+			return
+		} else {
+			log.Println(err_row)
+		}
+	}
+
+	rows, err := db.Query("SELECT f.date, b.fare FROM fares f LEFT JOIN bus b ON b.id = f.id_bus WHERE f.id_user = $1", IdUserToken)
+	if err != nil {
+		log.Println(err)
+	}
+	defer rows.Close()
+
+	var fares []Fare
+
+	var totalMes int = 0
+	var totalValorMes float64 = 0.0
+
+	now := time.Now()
+	currentYear, currentMonth, _ := now.Date()
+
+	layout := "2006-01-02T15:04:05-0700"
+
+	for rows.Next() {
+		var f Fare
+		err := rows.Scan(&f.Date, &f.Fare)
+		if err != nil {
+			log.Println(err)
+		}
+		parsedDate, err := time.Parse(layout, f.Date)
+
+		if err == nil {
+			year, month, _ := parsedDate.Date()
+
+			if year == currentYear && month == currentMonth {
+				totalMes++
+				totalValorMes += f.Fare
+			}
+		} else {
+			fmt.Println("Erro ao ler data:", err)
+		}
+
+		fares = append(fares, f)
+	}
+
+	err = rows.Err()
+	if err != nil {
+		log.Println(err)
+	}
+
+	if len(fares) == 0 {
+		totalMes = 0
+		totalValorMes = 0.0
+	}
+
+	rows_bus, err := db.Query("SELECT b.id, b.name, b.fare, b.route, bs.lat, bs.lng, bs.date FROM bus b INNER JOIN (SELECT DISTINCT ON (id_bus) * FROM bus_stats ORDER BY id_bus, date::timestamptz DESC) bs ON b.id = bs.id_bus WHERE b.active IS TRUE;")
+	if err != nil {
+		log.Println(err)
+	}
+	defer rows_bus.Close()
+
+	var busAndStats []BusAndStats
+
+	for rows_bus.Next() {
+		var b BusAndStats
+		err := rows_bus.Scan(&b.ID, &b.Name, &b.Fare, &b.Route, &b.Lat, &b.Lng, &b.Date)
+		if err != nil {
+			log.Println(err)
+		}
+
+		busAndStats = append(busAndStats, b)
+	}
+
+	err = rows_bus.Err()
+	if err != nil {
+		log.Println(err)
+	}
+
+	c.IndentedJSON(http.StatusOK, gin.H{"id": user.ID, "image": user.Image, "name": user.Name, "surname": user.Surname, "balance": user.Balance, "totalRoutes": totalMes, "totalSpendMonth": totalValorMes, "buses": busAndStats})
+}
+
 func getFaresByUser(c *gin.Context) {
-	IdUser := c.Param("id")
-	err_id := uuid.Validate(IdUser)
-	if err_id != nil {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "ID must be a valid UUID"})
+	v, exists := c.Get("token")
+	if !exists {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid authorization header"})
+		return
+	}
+
+	token, ok := v.(string)
+	if !ok {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid authorization header"})
+		return
+	}
+
+	IdUserToken, err := getUserIDFromToken(token)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Cannot get ID with this TOKEN"})
+		return
+	}
+
+	rows, err := db.Query("SELECT f.id as id, f.date as date, b.name as bus_name, b.fare as bus_fare FROM fares f JOIN bus b ON b.id = f.id_bus WHERE f.id_user = $1 ORDER BY f.date DESC;", IdUserToken)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "No data found with ID: " + IdUserToken})
+			return
+		} else {
+			log.Println(err)
+		}
+	}
+	defer rows.Close()
+
+	var fareHistory []FareHistory
+
+	for rows.Next() {
+		var a FareHistory
+		err := rows.Scan(&a.ID, &a.Date, &a.NameBus, &a.FareBus)
+		if err != nil {
+			log.Println(err)
+		}
+		fareHistory = append(fareHistory, a)
+	}
+
+	err = rows.Err()
+	if err != nil {
+		log.Println(err)
+	}
+
+	c.IndentedJSON(http.StatusOK, fareHistory)
+}
+
+func getBalanceHistoryByUser(c *gin.Context) {
+	v, exists := c.Get("token")
+	if !exists {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid authorization header"})
+		return
+	}
+
+	token, ok := v.(string)
+	if !ok {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid authorization header"})
+		return
+	}
+
+	IdUserToken, err := getUserIDFromToken(token)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Cannot get ID with this TOKEN"})
+		return
+	}
+
+	rows, err := db.Query("SELECT id, id_user, old_balance, balance, value, type, date FROM balance_history WHERE id_user = $1 ORDER BY date DESC;", IdUserToken)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "No data found with ID: " + IdUserToken})
+			return
+		} else {
+			log.Println(err)
+		}
+	}
+	defer rows.Close()
+
+	var balanceHistory []BalanceHistory
+
+	for rows.Next() {
+		var b BalanceHistory
+		err := rows.Scan(&b.ID, &b.IdUser, &b.OldBalance, &b.Balance, &b.Value, &b.Type, &b.Date)
+		if err != nil {
+			log.Println(err)
+		}
+		balanceHistory = append(balanceHistory, b)
+	}
+
+	err = rows.Err()
+	if err != nil {
+		log.Println(err)
+	}
+
+	c.IndentedJSON(http.StatusOK, balanceHistory)
+}
+
+func createDateString(time time.Time) string {
+	if time.IsZero() {
+		return ""
+	}
+	return time.Format("2006-01-02T15:04:05-0700")
+}
+
+func addBalanceUser(c *gin.Context) {
+	c.Header("Content-Type", "application/json")
+
+	var BalanceHistory BalanceHistory
+
+	if err := c.ShouldBindJSON(&BalanceHistory); err != nil {
+		var ValidationErrors validator.ValidationErrors
+		if errors.As(err, &ValidationErrors) {
+			errorMessages := make([]string, len(ValidationErrors))
+			for i, fieldError := range ValidationErrors {
+				errorMessages[i] = fmt.Sprintf("Field '%s' failed validation: %s", fieldError.Field(), fieldError.Tag())
+			}
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Invalid request payload", "errors": errorMessages})
+		} else {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Invalid request payload", "errors": err.Error()})
+		}
 		return
 	}
 
@@ -396,45 +667,46 @@ func getFaresByUser(c *gin.Context) {
 		return
 	}
 
-	if IdUser == IdUserToken {
-		rows, err := db.Query("SELECT f.id as id, f.date as date, b.name as bus_name, b.fare as bus_fare FROM fares f JOIN bus b ON b.id = f.id_bus WHERE f.id_user = $1 ORDER BY f.date DESC;", IdUserToken)
-		if err != nil {
-			if err == sql.ErrNoRows {
-				c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "No data found with ID: " + IdUserToken})
-				return
-			} else {
-				log.Fatal(err)
-			}
+	var user User
+	row_user := db.QueryRow("SELECT balance FROM users WHERE id = $1;", IdUserToken)
+
+	err_user := row_user.Scan(&user.Balance)
+
+	if err_user != nil {
+		if err_user == sql.ErrNoRows {
+			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "No data found with UID: " + IdUserToken})
+			return
+		} else {
+			log.Println(err_user)
 		}
-		defer rows.Close()
-
-		var fareHistory []FareHistory
-
-		for rows.Next() {
-			var a FareHistory
-			err := rows.Scan(&a.ID, &a.Date, &a.NameBus, &a.FareBus)
-			if err != nil {
-				log.Fatal(err)
-			}
-			fareHistory = append(fareHistory, a)
-		}
-
-		err = rows.Err()
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		c.IndentedJSON(http.StatusOK, fareHistory)
-	} else {
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "IDs are not equals"})
 	}
-}
 
-func createDateString(time time.Time) string {
-	if time.IsZero() {
-		return ""
+	stmt_update, err := db.Prepare("UPDATE users SET balance = $1 WHERE id = $2")
+	if err != nil {
+		log.Println(err)
 	}
-	return time.Format("2006-01-02T15:04:05-0700")
+	defer stmt_update.Close()
+
+	if _, err := stmt_update.Exec((user.Balance + BalanceHistory.Value), IdUserToken); err != nil {
+		log.Println(err)
+	}
+
+	stmt, err := db.Prepare("INSERT INTO balance_history (id, id_user, old_balance, balance, value, type, date) VALUES ($1, $2, $3, $4, $5, $6, $7)")
+	if err != nil {
+		log.Println(err)
+	}
+	defer stmt.Close()
+
+	id_balance_history := uuid.New()
+
+	loc := time.FixedZone("BRT", -3*60*60)
+	time := time.Now().In(loc)
+
+	if _, err := stmt.Exec(id_balance_history, IdUserToken, (user.Balance + BalanceHistory.Value), user.Balance, BalanceHistory.Value, BalanceHistory.Type, createDateString(time)); err != nil {
+		log.Println(err)
+	}
+
+	c.IndentedJSON(http.StatusOK, gin.H{"message": "Saldo adicionado com sucesso!"})
 }
 
 func createFare(c *gin.Context) {
@@ -466,7 +738,7 @@ func createFare(c *gin.Context) {
 			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "No data found with ID: " + fare.IdBus})
 			return
 		} else {
-			log.Fatal(err_bus)
+			log.Println(err_bus)
 		}
 	}
 
@@ -481,7 +753,7 @@ func createFare(c *gin.Context) {
 			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "No data found with UID: " + fare.Uid})
 			return
 		} else {
-			log.Fatal(err_user)
+			log.Println(err_user)
 		}
 	}
 
@@ -493,7 +765,7 @@ func createFare(c *gin.Context) {
 
 	stmt, err := db.Prepare("INSERT INTO fares (id, id_bus, id_user, date) VALUES ($1, $2, $3, $4)")
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 	defer stmt.Close()
 
@@ -503,17 +775,17 @@ func createFare(c *gin.Context) {
 	time := time.Now().In(loc)
 
 	if _, err := stmt.Exec(id_fare, bus.ID, user.ID, createDateString(time)); err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 
 	stmt_update, err := db.Prepare("UPDATE users SET balance = $1 WHERE id = $2")
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 	defer stmt_update.Close()
 
 	if _, err := stmt_update.Exec((user.Balance - bus.Fare), user.ID); err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 
 	hub.BroadcastToID(bus.ID, gin.H{"type": "success", "id": user.ID, "image": user.Image, "name": user.Name, "surname": user.Surname, "fare": bus.Fare, "old_balance": user.Balance, "balance": (user.Balance - bus.Fare)})
@@ -558,13 +830,13 @@ func signInUser(c *gin.Context) {
 			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "Login ou Senha estão incorretos!"})
 			return
 		} else {
-			log.Fatal(err_user)
+			log.Println(err_user)
 		}
 	}
 
 	if VerifyPassword(login.Password, user.Password) {
 		token, _ := createToken(user.ID, user.Role)
-		c.IndentedJSON(http.StatusOK, gin.H{"id": user.ID, "name": user.Name, "surname": user.Surname, "token": token})
+		c.IndentedJSON(http.StatusOK, gin.H{"id": user.ID, "name": user.Name, "surname": user.Surname, "role": user.Role, "token": token})
 	} else {
 		c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "Login ou Senha estão incorretos!"})
 	}
@@ -600,7 +872,7 @@ func signInUser(c *gin.Context) {
 // 			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "No data found with UID: " + uid.Uid})
 // 			return
 // 		} else {
-// 			log.Fatal(err)
+// 			log.Println(err)
 // 		}
 // 	}
 
@@ -627,19 +899,19 @@ func createUser(c *gin.Context) {
 
 	stmt_address, err := db.Prepare("INSERT INTO addresses (id, postalcode, number, street, district, city, state, complement) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)")
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 	defer stmt_address.Close()
 
 	id_address := uuid.New()
 
 	if _, err := stmt_address.Exec(id_address, user.Address.PostalCode, user.Address.Number, user.Address.Street, user.Address.District, user.Address.City, user.Address.State, user.Address.Complement); err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 
-	stmt, err := db.Prepare("INSERT INTO users (id, id_address, image, name, surname, email, phone, cpf, password) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)")
+	stmt, err := db.Prepare("INSERT INTO users (id, id_address, image, name, surname, email, phone, cpf, password) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)")
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 	defer stmt.Close()
 
@@ -647,7 +919,7 @@ func createUser(c *gin.Context) {
 	hashPassword, _ := HashPassword(user.Password)
 
 	if _, err := stmt.Exec(id_user, id_address, user.Image, user.Name, user.Surname, user.Email, user.Phone, user.Cpf, hashPassword); err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 
 	c.IndentedJSON(http.StatusCreated, gin.H{"message": "User successfully created!", "id": id_user})
@@ -661,16 +933,16 @@ func createBus(c *gin.Context) {
 		return
 	}
 
-	stmt, err := db.Prepare("INSERT INTO bus (id, name) VALUES ($1, $2)")
+	stmt, err := db.Prepare("INSERT INTO bus (id, name, route, fare, active) VALUES ($1, $2, $3, $4, $5)")
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 	defer stmt.Close()
 
 	id_bus := uuid.New()
 
-	if _, err := stmt.Exec(id_bus, bus.Name); err != nil {
-		log.Fatal(err)
+	if _, err := stmt.Exec(id_bus, bus.Name, bus.Route, bus.Fare, bus.Active); err != nil {
+		log.Println(err)
 	}
 
 	c.IndentedJSON(http.StatusCreated, gin.H{"message": "Bus successfully created!", "id": id_bus})
@@ -695,7 +967,7 @@ func createBusStats(c *gin.Context) {
 			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "No bus found with ID: " + id})
 			return
 		} else {
-			log.Fatal(err)
+			log.Println(err)
 		}
 	}
 
@@ -707,7 +979,7 @@ func createBusStats(c *gin.Context) {
 
 	stmt, err := db.Prepare("INSERT INTO bus_stats (id, id_bus, lat, lng, date) VALUES ($1, $2, $3, $4, $5)")
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 	defer stmt.Close()
 
@@ -717,7 +989,7 @@ func createBusStats(c *gin.Context) {
 	time := time.Now().In(loc)
 
 	if _, err := stmt.Exec(id_bus_stats, id, bus_stats.Lat, bus_stats.Lng, createDateString(time)); err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 
 	c.IndentedJSON(http.StatusCreated, gin.H{"message": "Bus stats successfully created!", "id": id_bus_stats})
