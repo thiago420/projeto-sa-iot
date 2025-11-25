@@ -15,14 +15,14 @@ type WSMessage struct {
 }
 
 type Hub struct {
-	clients  map[*websocket.Conn]bool
-	mu       sync.Mutex
-	upgrader websocket.Upgrader
+	clientsByID map[string]map[*websocket.Conn]bool
+	mu          sync.Mutex
+	upgrader    websocket.Upgrader
 }
 
 func NewHub() *Hub {
 	return &Hub{
-		clients: make(map[*websocket.Conn]bool),
+		clientsByID: make(map[string]map[*websocket.Conn]bool),
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
@@ -35,32 +35,44 @@ func (h *Hub) HandleWS(cCtx *ginContextAdapter) {
 	w := cCtx.Writer()
 	r := cCtx.Request()
 
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+
 	conn, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Println("ws upgrade:", err)
 		return
 	}
-	defer conn.Close()
 
 	h.mu.Lock()
-	h.clients[conn] = true
+	if h.clientsByID[id] == nil {
+		h.clientsByID[id] = make(map[*websocket.Conn]bool)
+	}
+	h.clientsByID[id][conn] = true
 	h.mu.Unlock()
 
+	// Listen for close
 	for {
-		_, _, err := conn.ReadMessage()
-		if err != nil {
+		if _, _, err := conn.ReadMessage(); err != nil {
 			break
 		}
 	}
 
+	// Remove on disconnect
 	h.mu.Lock()
-	delete(h.clients, conn)
+	delete(h.clientsByID[id], conn)
 	h.mu.Unlock()
+
+	conn.Close()
 }
 
-func (h *Hub) Broadcast(msg any) {
+func (h *Hub) BroadcastToID(id string, msg any) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
+	conns := h.clientsByID[id]
+	h.mu.Unlock()
 
 	b, err := json.Marshal(msg)
 	if err != nil {
@@ -68,11 +80,27 @@ func (h *Hub) Broadcast(msg any) {
 		return
 	}
 
-	for conn := range h.clients {
+	for conn := range conns {
 		if err := conn.WriteMessage(websocket.TextMessage, b); err != nil {
 			log.Println("ws write:", err)
 			conn.Close()
-			delete(h.clients, conn)
+
+			h.mu.Lock()
+			delete(h.clientsByID[id], conn)
+			h.mu.Unlock()
+		}
+	}
+}
+
+func (h *Hub) BroadcastAll(msg any) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	b, _ := json.Marshal(msg)
+
+	for _, conns := range h.clientsByID {
+		for conn := range conns {
+			conn.WriteMessage(websocket.TextMessage, b)
 		}
 	}
 }

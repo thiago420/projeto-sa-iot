@@ -28,6 +28,7 @@ type Login struct {
 type User struct {
 	ID        string   `json:"id,omitempty"`
 	IdAddress string   `json:"id_address,omitempty"`
+	Image     string   `json:"image" binding:"required,url"`
 	Name      string   `json:"name" binding:"required,gte=4"`
 	Surname   string   `json:"surname" binding:"required,gte=4"`
 	Email     string   `json:"email" binding:"required,email"`
@@ -35,6 +36,7 @@ type User struct {
 	Cpf       string   `json:"cpf" binding:"required,gte=11,lte=11"`
 	Password  string   `json:"password" binding:"required,gte=8"`
 	Balance   float64  `json:"balance,omitempty"`
+	Role      string   `json:"role,omitempty"`
 	Address   *Address `json:"address" binding:"required"`
 }
 
@@ -203,6 +205,7 @@ func main() {
 
 	user := v1.Group("user")
 	user.Use(TokenAuthMiddleware())
+	user.GET("/info/basic", getBasicInfoUser)
 	user.GET("/fare/history/:id", getFaresByUser)
 
 	hub = NewHub()
@@ -331,6 +334,42 @@ func getBusStats(c *gin.Context) {
 	c.IndentedJSON(http.StatusOK, bus_sts)
 }
 
+func getBasicInfoUser(c *gin.Context) {
+	v, exists := c.Get("token")
+	if !exists {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid authorization header"})
+		return
+	}
+
+	token, ok := v.(string)
+	if !ok {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid authorization header"})
+		return
+	}
+
+	IdUserToken, err := getUserIDFromToken(token)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Cannot get ID with this TOKEN"})
+		return
+	}
+
+	var user User
+	row := db.QueryRow("SELECT image, name, surname, balance FROM users WHERE id = $1;", IdUserToken)
+
+	err_row := row.Scan(&user.Image, &user.Name, &user.Surname, &user.Balance)
+
+	if err_row != nil {
+		if err_row == sql.ErrNoRows {
+			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "No data found with ID: " + IdUserToken})
+			return
+		} else {
+			log.Fatal(err_row)
+		}
+	}
+
+	c.IndentedJSON(http.StatusOK, gin.H{"image": user.Image, "name": user.Name, "surname": user.Surname, "balance": user.Balance})
+}
+
 func getFaresByUser(c *gin.Context) {
 	IdUser := c.Param("id")
 	err_id := uuid.Validate(IdUser)
@@ -424,7 +463,6 @@ func createFare(c *gin.Context) {
 
 	if err_bus != nil {
 		if err_bus == sql.ErrNoRows {
-			hub.Broadcast(gin.H{"error": "No data found with ID: " + fare.IdBus})
 			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "No data found with ID: " + fare.IdBus})
 			return
 		} else {
@@ -433,13 +471,13 @@ func createFare(c *gin.Context) {
 	}
 
 	var user User
-	row_user := db.QueryRow("SELECT us.id, us.name, us.surname, us.balance FROM users us LEFT JOIN uids ui ON ui.id_user = us.id WHERE ui.uid = $1", fare.Uid)
+	row_user := db.QueryRow("SELECT us.id, us.image, us.name, us.surname, us.balance FROM users us LEFT JOIN uids ui ON ui.id_user = us.id WHERE ui.uid = $1", fare.Uid)
 
-	err_user := row_user.Scan(&user.ID, &user.Name, &user.Surname, &user.Balance)
+	err_user := row_user.Scan(&user.ID, &user.Image, &user.Name, &user.Surname, &user.Balance)
 
 	if err_user != nil {
 		if err_user == sql.ErrNoRows {
-			hub.Broadcast(gin.H{"error": "No data found with UID: " + fare.Uid})
+			hub.BroadcastToID(bus.ID, gin.H{"type": "error", "error": gin.H{"type": "USER_NOT_FOUND", "message": "Nenhum usuário encontrado com este cartão"}})
 			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "No data found with UID: " + fare.Uid})
 			return
 		} else {
@@ -448,7 +486,7 @@ func createFare(c *gin.Context) {
 	}
 
 	if (user.Balance - bus.Fare) < 0 {
-		hub.Broadcast(gin.H{"error": "Saldo insuficiente, Saldo: R$ " + fmt.Sprintf("%.2f", user.Balance)})
+		hub.BroadcastToID(bus.ID, gin.H{"type": "error", "error": gin.H{"type": "INSUFFICIENT_BALANCE", "message": "Saldo insuficiente, Saldo: R$ " + fmt.Sprintf("%.2f", user.Balance)}})
 		c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "Saldo insuficiente, Saldo: R$ " + fmt.Sprintf("%.2f", user.Balance)})
 		return
 	}
@@ -478,7 +516,7 @@ func createFare(c *gin.Context) {
 		log.Fatal(err)
 	}
 
-	hub.Broadcast(gin.H{"id": user.ID, "name": user.Name, "surname": user.Surname, "fare": bus.Fare, "old_balance": user.Balance, "balance": (user.Balance - bus.Fare)})
+	hub.BroadcastToID(bus.ID, gin.H{"type": "success", "id": user.ID, "image": user.Image, "name": user.Name, "surname": user.Surname, "fare": bus.Fare, "old_balance": user.Balance, "balance": (user.Balance - bus.Fare)})
 	c.IndentedJSON(http.StatusOK, gin.H{"id": user.ID, "name": user.Name, "surname": user.Surname, "fare": bus.Fare, "old_balance": user.Balance, "balance": (user.Balance - bus.Fare)})
 }
 
@@ -503,17 +541,17 @@ func signInUser(c *gin.Context) {
 	var row_user *sql.Row
 
 	if validateEmail(login.Login) {
-		row_user = db.QueryRow("SELECT id, name, surname, password FROM users WHERE email = $1", login.Login)
+		row_user = db.QueryRow("SELECT id, role, name, surname, password FROM users WHERE role = $1 AND email = $2", "USER", login.Login)
 	} else if validateCPF(login.Login) {
-		row_user = db.QueryRow("SELECT id, name, surname, password FROM users WHERE cpf = $1", login.Login)
+		row_user = db.QueryRow("SELECT id, role, name, surname, password FROM users WHERE role = $1 AND cpf = $2", "USER", login.Login)
 	} else if validatePhone(login.Login) {
-		row_user = db.QueryRow("SELECT id, name, surname, password FROM users WHERE phone = $1", login.Login)
+		row_user = db.QueryRow("SELECT id, role, name, surname, password FROM users WHERE role = $1 AND phone = $2", "USER", login.Login)
 	} else {
 		c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "Login ou Senha estão incorretos!"})
 		return
 	}
 
-	err_user := row_user.Scan(&user.ID, &user.Name, &user.Surname, &user.Password)
+	err_user := row_user.Scan(&user.ID, &user.Role, &user.Name, &user.Surname, &user.Password)
 
 	if err_user != nil {
 		if err_user == sql.ErrNoRows {
@@ -525,7 +563,7 @@ func signInUser(c *gin.Context) {
 	}
 
 	if VerifyPassword(login.Password, user.Password) {
-		token, _ := createToken(user.ID)
+		token, _ := createToken(user.ID, user.Role)
 		c.IndentedJSON(http.StatusOK, gin.H{"id": user.ID, "name": user.Name, "surname": user.Surname, "token": token})
 	} else {
 		c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "Login ou Senha estão incorretos!"})
@@ -599,7 +637,7 @@ func createUser(c *gin.Context) {
 		log.Fatal(err)
 	}
 
-	stmt, err := db.Prepare("INSERT INTO users (id, id_address, name, surname, email, phone, cpf, password) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)")
+	stmt, err := db.Prepare("INSERT INTO users (id, id_address, image, name, surname, email, phone, cpf, password) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -608,7 +646,7 @@ func createUser(c *gin.Context) {
 	id_user := uuid.New()
 	hashPassword, _ := HashPassword(user.Password)
 
-	if _, err := stmt.Exec(id_user, id_address, user.Name, user.Surname, user.Email, user.Phone, user.Cpf, hashPassword); err != nil {
+	if _, err := stmt.Exec(id_user, id_address, user.Image, user.Name, user.Surname, user.Email, user.Phone, user.Cpf, hashPassword); err != nil {
 		log.Fatal(err)
 	}
 

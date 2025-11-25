@@ -7,11 +7,12 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-func createToken(IdUser string) (string, error) {
+func createToken(IdUser string, RoleUser string) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256,
 		jwt.MapClaims{
-			"id_user": IdUser,
-			"exp":     time.Now().Add(time.Hour * 24).Unix(),
+			"id_user":   IdUser,
+			"role_user": RoleUser,
+			"exp":       time.Now().Add(time.Hour * 24).Unix(),
 		})
 
 	tokenString, err := token.SignedString(JwtSecret)
