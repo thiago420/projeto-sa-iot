@@ -15,7 +15,10 @@ export const authOptions: NextAuthOptions = {
       authorize: async (credentials) => {
         if (!credentials) return null;
 
-        const res = await fetch("http://localhost:8080/v1/auth/login", {
+        // https://api-go-2tfm.onrender.com
+        // http://localhost:8080
+
+        const res = await fetch("https://api-go-2tfm.onrender.com/v1/auth/login", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

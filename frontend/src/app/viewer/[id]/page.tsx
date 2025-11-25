@@ -46,10 +46,10 @@ export default function ViewerPage({ params }: ViewerParams) {
   const [errorMessage, setErrorMessage] = useState<ErrorMessage | null>(null);
 
   useEffect(() => {
-    // ws://api-go-2tfm.onrender.com
+    // wss://api-go-2tfm.onrender.com
     // ws://localhost:8080
 
-    const ws = new WebSocket(`ws://api-go-2tfm.onrender.com/v1/ws?id=${id}`);
+    const ws = new WebSocket(`wss://api-go-2tfm.onrender.com/v1/ws?id=${id}`);
 
     ws.onopen = () => {
       console.log("WebSocket connected");
