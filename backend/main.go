@@ -193,7 +193,18 @@ func (g *ginContextAdapter) Request() *http.Request      { return g.c.Request }
 
 func main() {
 	viper.SetConfigFile(".env")
-	viper.ReadInConfig()
+
+	if err := viper.ReadInConfig(); err != nil {
+		log.Println("No .env file found, using environment variables")
+	}
+
+	viper.AutomaticEnv()
+
+	port := viper.GetString("PORT")
+	if port == "" {
+		log.Println("PORT not found, using fallback 8080")
+		port = "8080"
+	}
 
 	jwt_secret, ok := viper.Get("JWT_SECRET").(string)
 
@@ -213,12 +224,6 @@ func main() {
 	db, err = sql.Open("postgres", postgresql_uri)
 	if err != nil {
 		log.Println(err)
-	}
-
-	port, ok := viper.Get("PORT").(string)
-
-	if !ok {
-		log.Println("Invalid PORT")
 	}
 
 	router := gin.Default()

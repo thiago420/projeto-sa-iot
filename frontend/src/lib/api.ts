@@ -3,8 +3,11 @@ import axios from "axios";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 
+// https://api-go-2tfm.onrender.com
+// http://localhost:8080
+
 const api = axios.create({
-  baseURL: "http://localhost:8080/v1",
+  baseURL: "https://api-go-2tfm.onrender.com/v1",
 });
 
 // INTERCEPTOR — adiciona token real em todas as requests

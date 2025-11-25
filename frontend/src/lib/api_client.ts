@@ -1,8 +1,11 @@
 import axios from "axios";
 import { getSession } from "next-auth/react";
 
+// https://api-go-2tfm.onrender.com
+// http://localhost:8080
+
 const apiClient = axios.create({
-  baseURL: "http://localhost:8080/v1",
+  baseURL: "https://api-go-2tfm.onrender.com/v1",
 });
 
 apiClient.interceptors.request.use(
