@@ -1,0 +1,240 @@
+#define TINY_GSM_MODEM_SIM800
+
+#include <TinyGsmClient.h>
+#include <SPI.h>
+#include <MFRC522.h>
+#include <ArduinoJson.h>
+#include <TinyGPSPlus.h>
+#include <Wire.h>
+
+// =============================================================
+// CONFIGURAÇÕES DE REDE (GPRS)
+// =============================================================
+const char apn[]  = "zap.vivo.com.br";
+const char user[] = "vivo";
+const char pass[] = "vivo";
+
+// Configurações do Servidor (Extraído das suas URLs originais)
+// NOTA: IPs locais (192.168...) geralmente não funcionam via 4G
+const char server[] = "192.168.16.121";
+const int  port     = 8080;
+
+// Caminhos das APIs
+String pathUID = "/v1/bus/fare";
+String IdBus   = "ec9fc16d-3e6b-44d5-bf54-496c5e81d674";
+String pathGPS = "/v1/bus/c06fec68-765f-42e1-a6db-871222b0e069/stats";
+
+// =============================================================
+// CONFIGURAÇÃO DOS PINOS (HARDWARE)
+// =============================================================
+
+// --- PINOS DO MODEM (TTGO T-Call) ---
+#define MODEM_TX      27
+#define MODEM_RX      26
+#define MODEM_PWRKEY  4
+#define MODEM_RST     5
+#define MODEM_POWER_ON 32
+
+// --- PINOS DO GPS (Do seu código original) ---
+// Porta usada: RX no GPIO 34 (ou 14?), TX no GPIO 12 (ou 21?)
+// Mantive a definição do seu #define original:
+#define GPS_RX 14
+#define GPS_TX 21
+
+// --- PINOS DO RFID ---
+#define RFID_SDA 13
+#define RFID_RST 25
+
+// ATENÇÃO NA LINHA ABAIXO NO SETUP: SPI.begin(18, 19, 23, ...);
+// O pino 23 está sendo usado pelo MODEM_POWER_ON. 
+// Se usar TTGO T-Call, mude o pino do RFID.
+
+// =============================================================
+// OBJETOS GLOBAIS
+// =============================================================
+#define SerialMon Serial
+#define SerialAT  Serial1
+
+TinyGsm modem(SerialAT);
+TinyGsmClient client(modem);
+
+MFRC522 rfid(RFID_SDA, RFID_RST);
+
+TinyGPSPlus gps;
+HardwareSerial GPS_Serial(2); // Usei Serial 2 para não conflitar com Modem (Serial 1)
+
+unsigned long lastGpsPost = 0;
+
+// =============================================================
+// SETUP
+// =============================================================
+void setup() {
+  SerialMon.begin(115200);
+  delay(10);
+
+  // -----------------------------------------------------------
+  // 1. INICIALIZAÇÃO DO MODEM (SIM800L)
+  // -----------------------------------------------------------
+  pinMode(MODEM_POWER_ON, OUTPUT);
+  digitalWrite(MODEM_POWER_ON, HIGH); // Liga o Modem
+
+  pinMode(MODEM_PWRKEY, OUTPUT);
+  digitalWrite(MODEM_PWRKEY, HIGH);
+  delay(100);
+  digitalWrite(MODEM_PWRKEY, LOW);
+  delay(1000);
+  digitalWrite(MODEM_PWRKEY, HIGH);
+
+  SerialMon.println("Inicializando Modem GSM...");
+  SerialAT.begin(115200, SERIAL_8N1, MODEM_RX, MODEM_TX);
+  delay(3000);
+  
+  modem.restart();
+  
+  // Conectar na rede
+  SerialMon.print("Conectando APN: ");
+  SerialMon.print(apn);
+  if (!modem.gprsConnect(apn, user, pass)) {
+    SerialMon.println(" -> Falha na conexão GPRS (tentaremos novamente no loop)");
+  } else {
+    SerialMon.println(" -> Conectado GPRS!");
+  }
+
+  // -----------------------------------------------------------
+  // 2. INICIALIZAÇÃO DO GPS
+  // -----------------------------------------------------------
+  GPS_Serial.begin(9600, SERIAL_8N1, GPS_RX, GPS_TX);
+  SerialMon.println("GPS Iniciado");
+
+  // -----------------------------------------------------------
+  // 3. INICIALIZAÇÃO DO RFID
+  // -----------------------------------------------------------
+  // ATENÇÃO: Se pino 23 for Power do Modem, mude o terceiro argumento (MOSI)
+  // Exemplo: SPI.begin(18, 19, 32, RFID_SDA); se mudar o fio fisicamente.
+  // Mantendo conforme original mas ciente do risco:
+  SPI.begin(18, 19, 23, RFID_SDA); 
+  rfid.PCD_Init();
+  
+  SerialMon.println("\nSistema Pronto (Modo GPRS)!");
+  SerialMon.println("Aproxime um cartão RFID...");
+}
+
+// =============================================================
+// LOOP
+// =============================================================
+void loop() {
+  // Verifica se o GPRS caiu e tenta reconectar
+  if (!modem.isGprsConnected()) {
+    SerialMon.println("GPRS desconectado. Reconectando...");
+    modem.gprsConnect(apn, user, pass);
+    delay(500); // Pequeno delay para não travar tudo
+  }
+
+  checkRFID();
+  readGPS();
+  sendGPSIfReady();
+  
+  // Mantém a comunicação do modem viva
+  modem.maintain();
+}
+
+// =============================================================
+// LÓGICA RFID
+// =============================================================
+void checkRFID() {
+  if (!rfid.PICC_IsNewCardPresent()) return;
+  if (!rfid.PICC_ReadCardSerial()) return;
+
+  String uidStr = "";
+  for (byte i = 0; i < rfid.uid.size; i++) {
+    if (rfid.uid.uidByte[i] < 0x10) uidStr += "0";
+    uidStr += String(rfid.uid.uidByte[i], HEX);
+  }
+  uidStr.toUpperCase();
+
+  SerialMon.println("UID LIDO: " + uidStr);
+  sendUID(uidStr);
+  rfid.PICC_HaltA();
+}
+
+void sendUID(String uid) {
+  StaticJsonDocument<200> doc;
+  doc["uid"] = uid;
+  doc["id_bus"] = IdBus;
+
+  String body;
+  serializeJson(doc, body);
+
+  sendPostGPRS(pathUID, body);
+}
+
+// =============================================================
+// LÓGICA GPS
+// =============================================================
+void readGPS() {
+  while (GPS_Serial.available()) {
+    gps.encode(GPS_Serial.read());
+  }
+}
+
+void sendGPSIfReady() {
+  if (millis() - lastGpsPost < 10000) return;  // 10 segundos
+  lastGpsPost = millis();
+
+  if (!gps.location.isValid()) {
+    SerialMon.println("GPS ainda sem fix...");
+    return;
+  }
+
+  float lat = gps.location.lat();
+  float lng = gps.location.lng();
+
+  StaticJsonDocument<200> doc;
+  doc["lat"] = lat;
+  doc["lng"] = lng;
+
+  String body;
+  serializeJson(doc, body);
+
+  SerialMon.println("📡 Enviando GPS via GPRS...");
+  sendPostGPRS(pathGPS, body);
+}
+
+// =============================================================
+// FUNÇÃO DE POST VIA GPRS (Substitui HTTPClient)
+// =============================================================
+void sendPostGPRS(String path, String body) {
+  if (!modem.isGprsConnected()) {
+    SerialMon.println("❌ Erro: Sem conexão GPRS");
+    return;
+  }
+
+  SerialMon.print("Conectando ao servidor: ");
+  SerialMon.println(server);
+
+  if (client.connect(server, port)) {
+    SerialMon.println("Enviando Header HTTP...");
+    
+    // Construção Manual do Header HTTP
+    client.print("POST " + path + " HTTP/1.1\r\n");
+    client.print("Host: " + String(server) + "\r\n");
+    client.print("Content-Type: application/json\r\n");
+    client.print("Content-Length: " + String(body.length()) + "\r\n");
+    client.print("Connection: close\r\n\r\n");
+    client.print(body);
+
+    // Aguarda e lê a resposta
+    unsigned long timeout = millis();
+    while (client.connected() && millis() - timeout < 10000) {
+      if (client.available()) {
+        String line = client.readStringUntil('\n');
+        SerialMon.println(line);
+        timeout = millis(); // Reseta timeout se houver dados
+      }
+    }
+    client.stop();
+    SerialMon.println("\n✅ Dados enviados (Conexão fechada)");
+  } else {
+    SerialMon.println("❌ Falha na conexão com o servidor (Socket)");
+  }
+}
